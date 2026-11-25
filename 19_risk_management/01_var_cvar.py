@@ -257,7 +257,9 @@ def monte_carlo_var(
     df, loc, scale = stats.t.fit(returns)
     rng = np.random.default_rng(seed)
     simulated = rng.standard_t(df, size=(n_simulations, horizon)) * scale + loc
-    cumulative = simulated.sum(axis=1)
+    if np.any(simulated <= -1):
+        raise ValueError("Student-t sampled simple returns at or below -100%")
+    cumulative = np.prod(1 + simulated, axis=1) - 1
     alpha = 1 - confidence
     return -np.percentile(cumulative, alpha * 100)
 
