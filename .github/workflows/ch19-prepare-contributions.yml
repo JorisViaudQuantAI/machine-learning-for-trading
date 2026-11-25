@@ -1,0 +1,81 @@
+name: Prepare three chapter 19 contribution branches
+on:
+  push:
+    branches: [chore/ch19-prepare-contributions]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ch19-prepare-contributions
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: github.repository == 'JorisViaudQuantAI/machine-learning-for-trading' && github.ref == 'refs/heads/chore/ch19-prepare-contributions'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /.github/scripts/notebook_provenance.py
+            /19_risk_management/01_var_cvar.py
+            /19_risk_management/01_var_cvar.ipynb
+            /tests/test_ch19_initial_drawdown.py
+            /tests/test_ch19_empirical_expected_shortfall.py
+            /tests/test_ch19_multiperiod_var.py
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install isolated verification dependencies
+        run: python -m pip install 'jupytext==1.19.3' numpy scipy pytest
+      - name: Verify original and corrected functions, synchronize and clear notebook
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          printf '[pytest]\n' > "$RUNNER_TEMP/ch19-pytest.ini"
+          base=13b75a828c2a2fba1c20d8b16be0070eedbd1597
+          py=19_risk_management/01_var_cvar.py
+          nb=19_risk_management/01_var_cvar.ipynb
+          git fetch --depth=1 origin "$base"
+          git show "$base:$py" > "$RUNNER_TEMP/ch19-original.py"
+          git show-ref --head
+          for branch in fix/ch19-initial-drawdown candidate/ch19-empirical-expected-shortfall candidate/ch19-multiperiod-monte-carlo-var; do
+            case "$branch" in
+              fix/ch19-initial-drawdown) test=tests/test_ch19_initial_drawdown.py; expected=1;;
+              candidate/ch19-empirical-expected-shortfall) test=tests/test_ch19_empirical_expected_shortfall.py; expected=2;;
+              candidate/ch19-multiperiod-monte-carlo-var) test=tests/test_ch19_multiperiod_var.py; expected=2;;
+            esac
+            echo "::group::$branch"
+            git fetch --depth=1 origin "refs/heads/$branch"
+            git checkout --detach FETCH_HEAD
+            cp "$py" "$RUNNER_TEMP/ch19-corrected.py"
+            cp "$RUNNER_TEMP/ch19-original.py" "$py"
+            set +e
+            python -m pytest --noconftest -c "$RUNNER_TEMP/ch19-pytest.ini" -q "$test" > "$RUNNER_TEMP/ch19-before.txt" 2>&1
+            status=$?
+            set -e
+            cat "$RUNNER_TEMP/ch19-before.txt"
+            cp "$RUNNER_TEMP/ch19-corrected.py" "$py"
+            test "$status" -eq 1
+            grep -Eq "^=*[[:space:]]*$expected failed" "$RUNNER_TEMP/ch19-before.txt"
+            python -m pytest --noconftest -c "$RUNNER_TEMP/ch19-pytest.ini" -q "$test"
+            sleep 1
+            touch "$py"
+            python -m jupytext --sync "$py"
+            python .github/scripts/notebook_provenance.py clear "$nb"
+            python .github/scripts/notebook_provenance.py check "$nb"
+            git diff --exit-code -- "$py"
+            git add -- "$nb"
+            if ! git diff --cached --quiet; then
+              git commit -m "Synchronize chapter 19 notebook and clear stale execution outputs"
+              git push origin "HEAD:refs/heads/$branch"
+            fi
+            echo "::endgroup::"
+          done
