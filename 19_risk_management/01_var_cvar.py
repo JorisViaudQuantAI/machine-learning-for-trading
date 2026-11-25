@@ -25,8 +25,9 @@
 #
 # That is also its weakness, and **conditional value at risk** is the answer to it. VaR says how far
 # down the threshold sits; it says nothing about what happens past it. CVaR, also called expected
-# shortfall, is the average loss *given* that the threshold was breached, so it reads the whole tail
-# rather than one point on it.
+# shortfall, is the average loss over the worst tail of fixed probability mass, so it reads
+# the whole tail rather than one point on it. For continuous distributions this equals the
+# conditional tail mean.
 #
 # This notebook computes both four different ways on nineteen years of real ETF returns, tests
 # whether the numbers hold up against what actually happened, and then asks two questions a
@@ -306,23 +307,28 @@ show_plotly_with_alt(
 # %% [markdown]
 # ## 3. Conditional Value at Risk (CVaR / Expected Shortfall)
 #
-# CVaR is the average loss conditional on a VaR breach. Unlike VaR, CVaR is subadditive
-# and provides full-tail information - both properties that make it the preferred
+# CVaR is the average loss over the worst tail of fixed probability mass. Unlike VaR,
+# CVaR is subadditive and provides full-tail information - both properties that make it the preferred
 # coherent risk measure when tail severity matters more than tail frequency.
 
 # %% [markdown]
 # ### Historical CVaR
 #
-# Historical CVaR averages the realized losses that fall beyond the VaR threshold.
+# Historical CVaR averages the worst (1 - confidence) fraction of empirical losses,
+# including only the required fraction of the boundary observation.
 
 
 # %%
 def historical_cvar(returns: np.ndarray, confidence: float = 0.95) -> float:
-    """Historical CVaR (Expected Shortfall): $\\mathbb{E}[L \\mid L \\geq \\text{VaR}_\\alpha]$."""
-    alpha = 1 - confidence
-    var_q = np.percentile(returns, alpha * 100)
-    tail_losses = returns[returns <= var_q]
-    return -np.mean(tail_losses)
+    """Historical expected shortfall: mean loss over the worst fixed tail mass."""
+    values = np.sort(np.asarray(returns, dtype=float))
+    if values.ndim != 1 or values.size == 0 or not np.isfinite(values).all():
+        raise ValueError("returns must be a nonempty finite 1D array")
+    if not 0 <= confidence < 1:
+        raise ValueError("confidence must be in [0, 1)")
+    mass = (1 - confidence) * values.size
+    weights = np.clip(mass - np.arange(values.size), 0.0, 1.0)
+    return -float(np.dot(values, weights) / mass)
 
 
 # %% [markdown]
